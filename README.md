@@ -33,7 +33,7 @@ Build cloud-init.yamls from multiple files
     ```
     or
     ```sh
-    main.go <directory where cloud-init.tmpl.yaml lives>
+    cloud-init-builder[platform] <directory where cloud-init.tmpl.yaml lives>
     ```
     if you built the Go file or downloaded the release
 
