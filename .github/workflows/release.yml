@@ -1,0 +1,129 @@
+# This workflow will build and release a Go project manually.
+# It uses a custom script to cross-compile for multiple platforms and handles semantic versioning.
+
+name: Manual Go Release
+
+# This allows the workflow to be triggered manually from the Actions tab in GitHub.
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'How to bump the version for the *next* development cycle (patch, minor, major)'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      binary_name:
+        description: 'Name for the output binary (defaults to the repository name)'
+        required: false
+      package_path:
+        description: 'Path to the Go package to build'
+        required: true
+        default: './src/main.go'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to push tags and commit the VERSION file
+    steps:
+      # 1. Check out the repository code, including all history to get tags
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }} # Use token for push access
+
+      # 2. Determine release version from the VERSION file
+      - name: Determine release version
+        id: versioner
+        run: |
+          # Read the version directly from the file (e.g., "1.0.0")
+          RELEASE_VERSION=$(cat VERSION)
+          
+          echo "Releasing version: $RELEASE_VERSION"
+          echo "release_version=$RELEASE_VERSION" >> $GITHUB_OUTPUT
+
+      # 3. Set up the Go environment
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.20'
+
+      # 4. Make the build script executable
+      - name: Make build script executable
+        run: chmod +x build-release.bash
+
+      # 5. Run the build script to create binaries (CRITICAL FAILURE POINT)
+      - name: Build cross-platform binaries
+        run: |
+          BASE_NAME=${{ github.event.inputs.binary_name || github.event.repository.name }}
+          VERSIONED_NAME="${BASE_NAME}_${{ steps.versioner.outputs.release_version }}"
+          ./build-release.bash -b "${VERSIONED_NAME}" -p ${{ github.event.inputs.package_path }}
+
+      # --- From this point on, we assume the build was successful ---
+
+      # 6. Create release tag locally
+      - name: Create release tag locally
+        if: success()
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag ${{ steps.versioner.outputs.release_version }} -m "Release ${{ steps.versioner.outputs.release_version }}"
+
+      # 7. Create the GitHub Release and upload the binaries
+      - name: Create GitHub Release
+        if: success()
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.versioner.outputs.release_version }}
+          name: Release ${{ steps.versioner.outputs.release_version }}
+          files: release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 8. Calculate the next version using the release version and user input
+      - name: Calculate next version
+        if: success()
+        id: next_version
+        run: |
+          # Parse version components from the version we just released
+          RELEASE_VERSION=${{ steps.versioner.outputs.release_version }}
+          MAJOR=$(echo $RELEASE_VERSION | cut -d. -f1)
+          MINOR=$(echo $RELEASE_VERSION | cut -d. -f2)
+          PATCH=$(echo $RELEASE_VERSION | cut -d. -f3)
+          
+          # Bump version based on user input for the *next* cycle
+          case "${{ github.event.inputs.version_bump }}" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+          NEXT_VERSION="$MAJOR.$MINOR.$PATCH"
+          
+          echo "Next version will be: $NEXT_VERSION"
+          echo "next_version=$NEXT_VERSION" >> $GITHUB_OUTPUT
+
+      # 9. Commit the next version locally
+      - name: Commit next version
+        if: success()
+        run: |
+          echo "${{ steps.next_version.outputs.next_version }}" > VERSION
+          git add VERSION
+          git commit -m "chore: Set version to ${{ steps.next_version.outputs.next_version }}"
+
+      # 10. Push the commit and tag to the repository
+      - name: Push commit and tag
+        if: success()
+        run: git push --follow-tags
