@@ -21,7 +21,7 @@ on:
       package_path:
         description: 'Path to the Go package to build'
         required: true
-        default: './src.go'
+        default: './src/main.go'
 
 jobs:
   build-and-release:

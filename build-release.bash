@@ -108,6 +108,7 @@ for target in $TARGETS; do
     # The `if ! ...` block checks if the command fails (returns a non-zero exit code).
     if ! GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -o "$output_file" -ldflags "-s -w" "$PACKAGE_PATH"; then
         echo -e "${RED}-> ERROR: Build failed for ${os}/${arch}. Please check Go toolchain output.${NC}"
+        exit 1
     else
         echo -e "${GREEN}-> Successfully built: ${output_file}${NC}"
     fi
