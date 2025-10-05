@@ -21,7 +21,7 @@ on:
       package_path:
         description: 'Path to the Go package to build'
         required: true
-        default: './src/main.go'
+        default: './src.go'
 
 jobs:
   build-and-release:
@@ -29,34 +29,40 @@ jobs:
     permissions:
       contents: write # Required to push tags and commit the VERSION file
     steps:
-      # 1. Check out the repository code, including all history to get tags
+      # 1. Configure SSH agent with the deploy key for Git operations
+      - name: Set up SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
+
+      # 2. Check out the repository code using SSH
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }} # Use token for push access
+          # The repository URL must be in SSH format for the key to be used
+          repository: ${{ github.repository }}
+          ssh-key: ${{ secrets.DEPLOY_KEY }}
 
-      # 2. Determine release version from the VERSION file
+      # 3. Determine release version from the VERSION file
       - name: Determine release version
         id: versioner
         run: |
-          # Read the version directly from the file (e.g., "1.0.0")
           RELEASE_VERSION=$(cat VERSION)
-          
           echo "Releasing version: $RELEASE_VERSION"
           echo "release_version=$RELEASE_VERSION" >> $GITHUB_OUTPUT
 
-      # 3. Set up the Go environment
+      # 4. Set up the Go environment
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: '1.20'
 
-      # 4. Make the build script executable
+      # 5. Make the build script executable
       - name: Make build script executable
         run: chmod +x build-release.bash
 
-      # 5. Run the build script to create binaries (CRITICAL FAILURE POINT)
+      # 6. Run the build script to create binaries (CRITICAL FAILURE POINT)
       - name: Build cross-platform binaries
         run: |
           BASE_NAME=${{ github.event.inputs.binary_name || github.event.repository.name }}
@@ -65,15 +71,20 @@ jobs:
 
       # --- From this point on, we assume the build was successful ---
 
-      # 6. Create release tag locally
-      - name: Create release tag locally
+      # 7. Configure Git user for the bot
+      - name: Configure Git
         if: success()
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+      # 8. Create release tag locally
+      - name: Create release tag locally
+        if: success()
+        run: |
           git tag ${{ steps.versioner.outputs.release_version }} -m "Release ${{ steps.versioner.outputs.release_version }}"
 
-      # 7. Create the GitHub Release and upload the binaries
+      # 9. Create the GitHub Release and upload the binaries
       - name: Create GitHub Release
         if: success()
         uses: softprops/action-gh-release@v1
@@ -82,40 +93,27 @@ jobs:
           name: Release ${{ steps.versioner.outputs.release_version }}
           files: release/*
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Use default token for release creation API
 
-      # 8. Calculate the next version using the release version and user input
+      # 10. Calculate the next version
       - name: Calculate next version
         if: success()
         id: next_version
         run: |
-          # Parse version components from the version we just released
           RELEASE_VERSION=${{ steps.versioner.outputs.release_version }}
           MAJOR=$(echo $RELEASE_VERSION | cut -d. -f1)
           MINOR=$(echo $RELEASE_VERSION | cut -d. -f2)
           PATCH=$(echo $RELEASE_VERSION | cut -d. -f3)
-          
-          # Bump version based on user input for the *next* cycle
           case "${{ github.event.inputs.version_bump }}" in
-            major)
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
-              ;;
-            minor)
-              MINOR=$((MINOR + 1))
-              PATCH=0
-              ;;
-            patch)
-              PATCH=$((PATCH + 1))
-              ;;
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
           esac
           NEXT_VERSION="$MAJOR.$MINOR.$PATCH"
-          
           echo "Next version will be: $NEXT_VERSION"
           echo "next_version=$NEXT_VERSION" >> $GITHUB_OUTPUT
 
-      # 9. Commit the next version locally
+      # 11. Commit the next version locally
       - name: Commit next version
         if: success()
         run: |
@@ -123,7 +121,7 @@ jobs:
           git add VERSION
           git commit -m "chore: Set version to ${{ steps.next_version.outputs.next_version }}"
 
-      # 10. Push the commit and tag to the repository
+      # 12. Force push the commit and tag to the repository
       - name: Push commit and tag
         if: success()
-        run: git push --follow-tags
+        run: git push --force --follow-tags
