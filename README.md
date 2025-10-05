@@ -41,3 +41,7 @@ Build cloud-init.yamls from multiple files
     2. for each file, it will inlcude the content, keeping the indentation of the comment
     3. send the expanded file to stdout
  4. pipe or send the output to an editor or file
+
+# build-release
+ 1. run `.\build-release.ps1 -BinaryName cloud-init-builder -PackagePath ./src/main.go`
+ 2. run (untested) `.\build-release.bash -b cloud-init-builder -p ./src/main.go`
